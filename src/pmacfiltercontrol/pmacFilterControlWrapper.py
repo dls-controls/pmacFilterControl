@@ -513,6 +513,13 @@ class Wrapper:
 
         self.mode_rbv.set(mode)
 
+        if self.h5f is not None:
+            try:
+                self._close_file()
+            except Exception as e:
+                print(f"Failed closing file.\n{e}")
+
+
     @_if_connected
     def _set_manual_attenuation(self, attenuation: int) -> None:
 

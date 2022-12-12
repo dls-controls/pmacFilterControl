@@ -442,6 +442,7 @@ class Wrapper:
         if self.h5f is not None:
             try:
                 assert isinstance(self.h5f, h5py.File)
+                print(f"File {self.h5f} has been closed.")
                 self.h5f.close()
                 self.h5f = None
             except Exception as e:
@@ -718,12 +719,7 @@ class Wrapper:
     def _combine_file_path_and_name(self, exists: bool = False) -> None:
 
         path: str = self.file_path.get()
-        if exists:
-            name = "".join(
-                [self.file_name.get().strip(".h5"), f"-{dt.time(dt.now())}.h5"]
-            )
-        else:
-            name = self.file_name.get()
+        name = self.file_name.get()
 
         full_path: str = "/".join([path, name])
 
@@ -756,16 +752,16 @@ class Wrapper:
 
         if ADJUSTMENT_KEY not in self.h5f.keys():
             adjustment_dset = self.h5f.create_dataset(
-                ADJUSTMENT_KEY, (128,), maxshape=(None,), dtype=int
+                ADJUSTMENT_KEY, (1,), maxshape=(None,), dtype=int
             )
         if ATTENUATION_KEY not in self.h5f.keys():
             attenuation_dset = self.h5f.create_dataset(
-                ATTENUATION_KEY, (128,), maxshape=(None,), dtype=int
+                ATTENUATION_KEY, (1,), maxshape=(None,), dtype=int
             )
 
         if UID_KEY not in self.h5f.keys():
             uid_dataset = self.h5f.create_dataset(
-                UID_KEY, (128,), maxshape=(None,), dtype=int
+                UID_KEY, (1,), maxshape=(None,), dtype=int
             )
 
         adjustment_dset = self.h5f.get(ADJUSTMENT_KEY)
@@ -775,7 +771,8 @@ class Wrapper:
         uid_dataset = self.h5f.get(UID_KEY)
         assert isinstance(uid_dataset, h5py.Dataset)
 
-        self.h5f.swmr_mode = True
+        if not self.h5f.swmr_mode:
+            self.h5f.swmr_mode = True
 
         assert adjustment_dset.size == attenuation_dset.size
         dset_size = adjustment_dset.size
@@ -785,8 +782,12 @@ class Wrapper:
                 dset_size = dset_size + 1
             adjustment_dset.resize((dset_size,))
             attenuation_dset.resize((dset_size,))
-            uid_dataset.rezise((dset_size,))
+            uid_dataset.resize((dset_size,))
 
         adjustment_dset[data[FRAME_NUMBER_KEY]] = data[ADJUSTMENT_KEY]
         attenuation_dset[data[FRAME_NUMBER_KEY]] = data[ATTENUATION_KEY]
         uid_dataset[data[FRAME_NUMBER_KEY]] = int(data[FRAME_NUMBER_KEY]) + 1
+
+        adjustment_dset.flush()
+        attenuation_dset.flush()
+        uid_dataset.flush()

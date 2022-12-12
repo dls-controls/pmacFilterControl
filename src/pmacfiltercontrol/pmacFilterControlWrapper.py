@@ -439,10 +439,13 @@ class Wrapper:
         return True
 
     def _close_file(self) -> None:
-        assert isinstance(self.h5f, h5py.File)
-        print(f"File {self.h5f} has been closed.")
-        self.h5f.close()
-        self.h5f = None
+        if self.h5f is not None:
+            try:
+                assert isinstance(self.h5f, h5py.File)
+                self.h5f.close()
+                self.h5f = None
+            except Exception as e:
+                print(f"Failed closing file.\n{e}")
 
     def _req_status(self) -> None:
         req_status = b'{"command":"status"}'
@@ -489,11 +492,8 @@ class Wrapper:
 
         time_since_last_frame = status["time_since_last_message"]
         self.time_since_last_frame.set(time_since_last_frame)
-        if time_since_last_frame > self.timeout_rbv.get() and self.h5f is not None:
-            try:
-                self._close_file()
-            except Exception as e:
-                print(f"Failed closing file.\n{e}")
+        if time_since_last_frame > self.timeout_rbv.get():
+            self._close_file()
 
         current_attenuation = status["current_attenuation"]
         self.current_attenuation.set(current_attenuation)
@@ -513,12 +513,7 @@ class Wrapper:
 
         self.mode_rbv.set(mode)
 
-        if self.h5f is not None:
-            try:
-                self._close_file()
-            except Exception as e:
-                print(f"Failed closing file.\n{e}")
-
+        self._close_file()
 
     @_if_connected
     def _set_manual_attenuation(self, attenuation: int) -> None:

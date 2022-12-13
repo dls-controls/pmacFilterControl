@@ -13,6 +13,7 @@ from softioc import builder
 from typing import Callable, Dict, Optional, Union
 
 from .zmqadapter import ZeroMQAdapter
+from .hdfadapter import HDFAdapter
 
 
 MODE = [
@@ -48,11 +49,6 @@ ATTENUATION = [
     14,
     15,
 ]
-
-ATTENUATION_KEY = "attenuation"
-ADJUSTMENT_KEY = "adjustment"
-FRAME_NUMBER_KEY = "frame_number"
-UID_KEY = "/uid"
 
 SHUTTER_CLOSED = "CLOSED"
 SHUTTER_OPEN = "OPEN"
@@ -113,7 +109,7 @@ class Wrapper:
         self.status_recv: bool = True
         self.connected: bool = False
 
-        self.h5f: Optional[h5py.File] = None
+        self.h5f: HDFAdapter = HDFAdapter(hdf_file_path)
 
         self.pixel_count_thresholds = {
             "high1": 2,
@@ -423,34 +419,20 @@ class Wrapper:
                 resp_json = json.loads(resp)
 
                 if "frame_number" in resp_json:
-                    file_open = self._open_file()
+                    file_open = self.open_file()
                     if file_open:
-                        await self._write_to_hdf5(resp_json)
+                        await self.h5f._write_to_file(resp_json)
 
-    def _open_file(self) -> bool:
-        if self.h5f is None:
-            if self._check_path():
-                self.h5f = h5py.File(self.file_full_name.get(), "w", libver="latest")
-                print(f"File {self.h5f} is open.")
-        else:
-            if self.file_full_name.get() != self.h5f.filename:
-                print("Another file is already open and being written to.")
-                return False
-        return True
+    def open_file(self) -> bool:
+        self.h5f._open_file()
 
-    def _close_file(self) -> None:
-        if self.h5f is not None:
-            try:
-                assert isinstance(self.h5f, h5py.File)
-                print(f"File {self.h5f} has been closed.")
-                self.h5f.close()
-                self.h5f = None
-            except Exception as e:
-                print(f"Failed closing file.\n{e}")
+    def close_file(self) -> None:
+        self.h5f._close_file()
 
     def _req_status(self) -> None:
         req_status = b'{"command":"status"}'
         self._send_message(req_status)
+
     async def _query_status(self) -> None:
         while True:
             if not self.zmq_stream.running:
@@ -494,7 +476,7 @@ class Wrapper:
         time_since_last_frame = status["time_since_last_message"]
         self.time_since_last_frame.set(time_since_last_frame)
         if time_since_last_frame > self.timeout_rbv.get():
-            self._close_file()
+            self.close_file()
 
         current_attenuation = status["current_attenuation"]
         self.current_attenuation.set(current_attenuation)
@@ -514,7 +496,7 @@ class Wrapper:
 
         self.mode_rbv.set(mode)
 
-        self._close_file()
+        self.close_file()
 
     @_if_connected
     def _set_manual_attenuation(self, attenuation: int) -> None:
@@ -716,7 +698,7 @@ class Wrapper:
 
         self._combine_file_path_and_name()
 
-    def _combine_file_path_and_name(self, exists: bool = False) -> None:
+    def _combine_file_path_and_name(self) -> None:
 
         path: str = self.file_path.get()
         name = self.file_name.get()
@@ -725,69 +707,4 @@ class Wrapper:
 
         self.file_full_name.set(full_path)
 
-    def _check_path(self) -> bool:
-        if self.file_path.get() == "" or self.file_name.get() == "":
-            print(
-                f"Please enter a valid file path and name.\nPath={self.file_path.get()}\nName={self.file_name.get()}\nFullPath={self.file_full_name.get()}"
-            )
-        elif not os.path.isdir(self.file_path.get()):
-            parent_path: str = self.file_path.get().rsplit("/", 1)[0]
-            dir_name: str = self.file_path.get().rsplit("/", 1)[1]
-            if not os.path.isdir(parent_path):
-                print("Path not found. Enter a valid path.")
-            else:
-                print("Parent path exists, making new dir")
-                os.makedirs(dir_name, exist_ok=True)
-                return True
-        elif os.path.isdir(self.file_path.get()):
-            if os.path.isfile(self.file_full_name.get()):
-                self._combine_file_path_and_name(exists=True)
-            return True
-
-        return False
-
-    async def _write_to_hdf5(self, data) -> None:
-
-        assert isinstance(self.h5f, h5py.File)
-
-        if ADJUSTMENT_KEY not in self.h5f.keys():
-            adjustment_dset = self.h5f.create_dataset(
-                ADJUSTMENT_KEY, (1,), maxshape=(None,), dtype=int
-            )
-        if ATTENUATION_KEY not in self.h5f.keys():
-            attenuation_dset = self.h5f.create_dataset(
-                ATTENUATION_KEY, (1,), maxshape=(None,), dtype=int
-            )
-
-        if UID_KEY not in self.h5f.keys():
-            uid_dataset = self.h5f.create_dataset(
-                UID_KEY, (1,), maxshape=(None,), dtype=int
-            )
-
-        adjustment_dset = self.h5f.get(ADJUSTMENT_KEY)
-        assert isinstance(adjustment_dset, h5py.Dataset)
-        attenuation_dset = self.h5f.get(ATTENUATION_KEY)
-        assert isinstance(attenuation_dset, h5py.Dataset)
-        uid_dataset = self.h5f.get(UID_KEY)
-        assert isinstance(uid_dataset, h5py.Dataset)
-
-        if not self.h5f.swmr_mode:
-            self.h5f.swmr_mode = True
-
-        assert adjustment_dset.size == attenuation_dset.size
-        dset_size = adjustment_dset.size
-        if data[FRAME_NUMBER_KEY] >= dset_size:
-            assert isinstance(dset_size, np_int64)
-            while dset_size <= data[FRAME_NUMBER_KEY]:
-                dset_size = dset_size + 1
-            adjustment_dset.resize((dset_size,))
-            attenuation_dset.resize((dset_size,))
-            uid_dataset.resize((dset_size,))
-
-        adjustment_dset[data[FRAME_NUMBER_KEY]] = data[ADJUSTMENT_KEY]
-        attenuation_dset[data[FRAME_NUMBER_KEY]] = data[ATTENUATION_KEY]
-        uid_dataset[data[FRAME_NUMBER_KEY]] = int(data[FRAME_NUMBER_KEY]) + 1
-
-        adjustment_dset.flush()
-        attenuation_dset.flush()
-        uid_dataset.flush()
+        self.h5f._set_file_path(full_path)

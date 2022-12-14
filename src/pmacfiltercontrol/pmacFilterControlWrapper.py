@@ -428,7 +428,12 @@ class Wrapper:
 
                 if "frame_number" in resp_json:
                     if self.h5f.file is not None:
-                        self.h5f._write_to_file(resp_json)
+                        try:
+                            self.h5f._write_to_file(resp_json)
+                        except RuntimeError as e:
+                            print(e)
+                    else:
+                        print("WARNING: HDF5 file not open and frame recieved.")
 
     @_if_connected
     def open_file(self, _) -> bool:

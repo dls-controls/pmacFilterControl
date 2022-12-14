@@ -75,6 +75,14 @@ class HDFAdapter:
         self.uid_dataset = _fetch_dataset(UID_KEY)
 
     def _write_to_file(self, data) -> None:
+        try:
+            assert isinstance(self.file, h5py.File)
+            assert isinstance(self.adjustment_dset, h5py.Dataset)
+            assert isinstance(self.attenuation_dset, h5py.Dataset)
+            assert isinstance(self.uid_dataset, h5py.Dataset)
+        except AssertionError as e:
+            raise RuntimeError("* ERROR: HDF5 file not open or missing datasets.")
+            return
 
         if not self.file.swmr_mode:
             self.file.swmr_mode = True

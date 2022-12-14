@@ -29,7 +29,7 @@ class HDFAdapter:
             if self._check_path():
                 self.file = h5py.File(self.file_path, "w", libver="latest")
                 print(f"* File {self.file} is open.")
-                self._setup_file()
+                self._setup_datasets()
         else:
             if self.file_path != self.file.filename:
                 print("* Another file is already open and being written to.")
@@ -58,33 +58,21 @@ class HDFAdapter:
 
         return False
 
-    def _setup_file(self) -> None:
-        self._create_datasets()
-        self.get_datasets()
+    def _setup_datasets(self) -> None:
 
-    def _create_datasets(self) -> None:
+        print(f"* Creating/fetching datasets in HDF5 file: {self.file_path}")
 
-        print(f"* Creating datasets in HDF5 file: {self.file_path}")
+        def _fetch_dataset(key: str) -> h5py.Dataset:
+            dset: h5py.Dataset = None
+            if key not in self.file.keys():
+                dset = self.file.create_dataset(key, (1,), maxshape=(None,), dtype=int)
+            else:
+                dset = self.file.get(key)
+            return dset
 
-        if ADJUSTMENT_KEY not in self.file.keys():
-            adjustment_dset = self.file.create_dataset(
-                ADJUSTMENT_KEY, (1,), maxshape=(None,), dtype=int
-            )
-        if ATTENUATION_KEY not in self.file.keys():
-            attenuation_dset = self.file.create_dataset(
-                ATTENUATION_KEY, (1,), maxshape=(None,), dtype=int
-            )
-
-        if UID_KEY not in self.file.keys():
-            uid_dataset = self.file.create_dataset(
-                UID_KEY, (1,), maxshape=(None,), dtype=int
-            )
-
-    def get_datasets(self) -> Optional[bool]:
-
-        self.adjustment_dset = self.file.get(ADJUSTMENT_KEY)
-        self.attenuation_dset = self.file.get(ATTENUATION_KEY)
-        self.uid_dataset = self.file.get(UID_KEY)
+        self.adjustment_dset = _fetch_dataset(ADJUSTMENT_KEY)
+        self.attenuation_dset = _fetch_dataset(ATTENUATION_KEY)
+        self.uid_dataset = _fetch_dataset(UID_KEY)
 
     def _write_to_file(self, data) -> None:
 

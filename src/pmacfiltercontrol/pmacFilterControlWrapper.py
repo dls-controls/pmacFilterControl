@@ -7,7 +7,6 @@ import zmq
 import h5py
 import os
 from aioca import caput, caget
-from numpy import int64 as np_int64
 from datetime import datetime as dt
 from softioc import builder
 from typing import Callable, Dict, Optional, Union
@@ -196,6 +195,15 @@ class Wrapper:
             "FILE:FULL_NAME",
         )
         self._combine_file_path_and_name()
+
+        self.file_open = builder.aOut(
+            "FILE:OPEN",
+            on_update=self.open_file,
+        )
+        self.file_close = builder.aOut(
+            "FILE:CLOSE",
+            on_update=self.close_file,
+        )
 
         self.process_duration = builder.aIn("PROCESS:DURATION", EGU="us")
         self.process_period = builder.aIn("PROCESS:PERIOD", EGU="us")
@@ -419,15 +427,24 @@ class Wrapper:
                 resp_json = json.loads(resp)
 
                 if "frame_number" in resp_json:
-                    file_open = self.open_file()
-                    if file_open:
-                        await self.h5f._write_to_file(resp_json)
+                    if self.h5f.file is not None:
+                        self.h5f._write_to_file(resp_json)
 
-    def open_file(self) -> bool:
-        self.h5f._open_file()
+    @_if_connected
+    def open_file(self, _) -> bool:
+        if _ == 1:
+            self.h5f._open_file()
 
-    def close_file(self) -> None:
-        self.h5f._close_file()
+        if self.file_close.get() != 0:
+            self.file_close.set(0)
+
+    @_if_connected
+    def close_file(self, _) -> None:
+        if _ == 1:
+            self.h5f._close_file()
+
+        if self.file_open.get() != 0:
+            self.file_open.set(0)
 
     def _req_status(self) -> None:
         req_status = b'{"command":"status"}'
@@ -476,7 +493,7 @@ class Wrapper:
         time_since_last_frame = status["time_since_last_message"]
         self.time_since_last_frame.set(time_since_last_frame)
         if time_since_last_frame > self.timeout_rbv.get():
-            self.close_file()
+            self.close_file(1)
 
         current_attenuation = status["current_attenuation"]
         self.current_attenuation.set(current_attenuation)
@@ -496,7 +513,7 @@ class Wrapper:
 
         self.mode_rbv.set(mode)
 
-        self.close_file()
+        self.close_file(1)
 
     @_if_connected
     def _set_manual_attenuation(self, attenuation: int) -> None:

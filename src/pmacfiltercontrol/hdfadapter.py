@@ -1,12 +1,8 @@
-import asyncio
-import codecs
-import logging
-
-import json
 import h5py
 import os
+from numpy import int64 as np_int64
 
-from typing import Callable, Dict, Optional, Union
+from typing import Optional
 
 ATTENUATION_KEY = "attenuation"
 ADJUSTMENT_KEY = "adjustment"
@@ -24,48 +20,51 @@ class HDFAdapter:
         self.file: Optional[h5py.File] = None
 
     def _set_file_path(self, new_file_path: str) -> None:
-        
+
         if self._check_path(new_file_path):
             self.file_path = new_file_path
 
-    def _open_file(self) -> bool:
+    def _open_file(self) -> None:
         if self.file is None:
             if self._check_path():
                 self.file = h5py.File(self.file_path, "w", libver="latest")
-                print(f"File {self.file} is open.")
+                print(f"* File {self.file} is open.")
+                self._setup_file()
         else:
             if self.file_path != self.file.filename:
-                print("Another file is already open and being written to.")
-                return False
-        return True
+                print("* Another file is already open and being written to.")
 
     def _close_file(self) -> None:
         if self.file is not None:
             try:
                 assert isinstance(self.file, h5py.File)
-                print(f"File {self.file} has been closed.")
+                print(f"* File {self.file} has been closed.")
                 self.file.close()
                 self.file = None
             except Exception as e:
-                print(f"Failed closing file.\n{e}")
+                print(f"* Failed closing file.\n{e}")
+        else:
+            print(f"* No file is open, ignoring close...")
 
     def _check_path(self, file_path: str) -> bool:
         if file_path == "" or file_path is None:
-            print(
-                f"Please enter a valid file path.\nPath={self.file_path}"
-            )
+            print(f"* Please enter a valid file path.\nPath={self.file_path}")
         else:
             parent_path: str = file_path.rsplit("/", 1)[0]
             if not os.path.isdir(parent_path):
-                print("Path not found. Enter a valid path.")
+                print("* Path not found. Enter a valid path.")
             else:
                 return True
 
         return False
 
-    def _write_to_file(self, data) -> None:
+    def _setup_file(self) -> None:
+        self._create_datasets()
+        self.get_datasets()
 
-        assert isinstance(self.file, h5py.File)
+    def _create_datasets(self) -> None:
+
+        print(f"* Creating datasets in HDF5 file: {self.file_path}")
 
         if ADJUSTMENT_KEY not in self.file.keys():
             adjustment_dset = self.file.create_dataset(
@@ -81,30 +80,31 @@ class HDFAdapter:
                 UID_KEY, (1,), maxshape=(None,), dtype=int
             )
 
-        adjustment_dset = self.file.get(ADJUSTMENT_KEY)
-        assert isinstance(adjustment_dset, h5py.Dataset)
-        attenuation_dset = self.file.get(ATTENUATION_KEY)
-        assert isinstance(attenuation_dset, h5py.Dataset)
-        uid_dataset = self.file.get(UID_KEY)
-        assert isinstance(uid_dataset, h5py.Dataset)
+    def get_datasets(self) -> Optional[bool]:
+
+        self.adjustment_dset = self.file.get(ADJUSTMENT_KEY)
+        self.attenuation_dset = self.file.get(ATTENUATION_KEY)
+        self.uid_dataset = self.file.get(UID_KEY)
+
+    def _write_to_file(self, data) -> None:
 
         if not self.file.swmr_mode:
             self.file.swmr_mode = True
 
-        assert adjustment_dset.size == attenuation_dset.size
-        dset_size = adjustment_dset.size
+        assert self.adjustment_dset.size == self.attenuation_dset.size
+        dset_size = self.adjustment_dset.size
         if data[FRAME_NUMBER_KEY] >= dset_size:
             assert isinstance(dset_size, np_int64)
             while dset_size <= data[FRAME_NUMBER_KEY]:
                 dset_size = dset_size + 1
-            adjustment_dset.resize((dset_size,))
-            attenuation_dset.resize((dset_size,))
-            uid_dataset.resize((dset_size,))
+            self.adjustment_dset.resize((dset_size,))
+            self.attenuation_dset.resize((dset_size,))
+            self.uid_dataset.resize((dset_size,))
 
-        adjustment_dset[data[FRAME_NUMBER_KEY]] = data[ADJUSTMENT_KEY]
-        attenuation_dset[data[FRAME_NUMBER_KEY]] = data[ATTENUATION_KEY]
-        uid_dataset[data[FRAME_NUMBER_KEY]] = int(data[FRAME_NUMBER_KEY]) + 1
+        self.adjustment_dset[data[FRAME_NUMBER_KEY]] = data[ADJUSTMENT_KEY]
+        self.attenuation_dset[data[FRAME_NUMBER_KEY]] = data[ATTENUATION_KEY]
+        self.uid_dataset[data[FRAME_NUMBER_KEY]] = int(data[FRAME_NUMBER_KEY]) + 1
 
-        adjustment_dset.flush()
-        attenuation_dset.flush()
-        uid_dataset.flush()
+        self.adjustment_dset.flush()
+        self.attenuation_dset.flush()
+        self.uid_dataset.flush()

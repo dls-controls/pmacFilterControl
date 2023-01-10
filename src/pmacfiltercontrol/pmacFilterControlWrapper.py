@@ -3,6 +3,7 @@ import codecs
 import logging
 
 import json
+from pathlib import Path
 import zmq
 import h5py
 import os
@@ -94,7 +95,7 @@ class Wrapper:
         filters_per_set: int,
         detector: str,
         motors: str,
-        autosave_pos_file_path: str,
+        autosave_file_path: str,
         hdf_file_path: str,
     ):
 
@@ -108,7 +109,7 @@ class Wrapper:
         self.detector: str = detector
         self.motors: str = motors
 
-        self.autosave_pos_file_path: str = autosave_pos_file_path
+        self.autosave_file: Path = Path(autosave_file_path)
 
         self.status_recv: bool = True
         self.connected: bool = False
@@ -220,39 +221,54 @@ class Wrapper:
             on_update=self._set_histogram_scale,
         )
 
-        self.autosave_exists: bool = self._check_autosave_file_exists()
-        self._autosave_pos_dict: Dict[str, float] = {}
+        self._autosave_dict: Dict[str, float] = {}
 
-        if self.autosave_exists:
-            self._autosave_pos_dict = self._get_autosave()
+        if self.autosave_file.exists():
+            print("--- Autosave exists, restoring ---")
+            self._autosave_dict = self._get_autosave()
 
         self._generate_filter_pos_records(filter_set_total, filters_per_set)
         self._generate_shutter_records()
         self._generate_pixel_threshold_records()
 
-        self.write_autosave()
+    def _send_initial_config(self) -> None:
 
-    def _check_autosave_file_exists(self) -> bool:
-        if os.path.exists(self.autosave_pos_file_path):
-            return True
-        else:
-            return False
+        async def while_not_connected() -> None:
+            while not self.connected:
+                await asyncio.sleep(0.5)
+
+        if not self.connected:
+            print("~ Initial Config: Waiting For Connection")
+            asyncio.run(while_not_connected())
+        self._configure_param({"shutter_closed_position": self.shutter_pos_closed.get()})
+        self._set_filter_set(0)
+        asyncio.run(self._setup_hist_thresholds())
+        print("~ Initial Config: Complete")
 
     def _get_autosave(self) -> Dict[str, float]:
         pos_dict = {}
-        with open(self.autosave_pos_file_path, "r") as pos_file:
-            for line in pos_file:
+        with self.autosave_file.open("r") as autosave_file:
+            for line in autosave_file:
                 line = line.strip().split(" ")
                 pos_dict[line[0]] = float(line[1])
         return pos_dict
 
     def write_autosave(self) -> None:
 
-        with open(self.autosave_pos_file_path, "w") as pos_file:
-            for key, value in self._autosave_pos_dict.items():
-                pos_file.write(f"{key} {value}\n")
+        parent_dir = self.autosave_file.parent
+        self.autosave_datetime: dt = dt.now()
+        self.autosave_backup_file: Path = parent_dir.joinpath(
+            f"autosave-{self.autosave_datetime:%Y%m%d-%H}.txt"
+        )
 
-        print("Updated autosave file with new positions.")
+        for autosave_file in [self.autosave_file, self.autosave_backup_file]:
+            autosave_file.write_text(
+                "\n".join(
+                    f"{key} {value}" for key, value in self._autosave_dict.items()
+                )
+            )
+
+            print(f"Updated {autosave_file.name} with new positions.")
 
     def _generate_filter_pos_records(
         self,
@@ -273,30 +289,30 @@ class Wrapper:
                 OUT_KEY = f"FILTER_SET:{i}:OUT:{j}"
 
                 in_value: float = (
-                    self._autosave_pos_dict[f"{self.device_name}:{IN_KEY}"]
-                    if self.autosave_exists
+                    self._autosave_dict[f"{self.device_name}:{IN_KEY}"]
+                    if self.autosave_file.exists()
                     else 100.0
                 )
                 in_record: builder.aOut = builder.aOut(
                     IN_KEY,
                     initial_value=in_value,
-                    on_update=lambda val, i=i: self._set_pos(i, IN_KEY, val),
+                    on_update=lambda val, i=i, in_key=IN_KEY: self._set_pos(i, in_key, val),
                 )
 
                 out_value: float = (
-                    self._autosave_pos_dict[f"{self.device_name}:{OUT_KEY}"]
-                    if self.autosave_exists
+                    self._autosave_dict[f"{self.device_name}:{OUT_KEY}"]
+                    if self.autosave_file.exists()
                     else 0.0
                 )
                 out_record: builder.aOut = builder.aOut(
                     OUT_KEY,
                     initial_value=out_value,
-                    on_update=lambda val, i=i: self._set_pos(i, OUT_KEY, val),
+                    on_update=lambda val, i=i, out_key=OUT_KEY: self._set_pos(i, out_key, val),
                 )
 
-                if not self.autosave_exists:
-                    self._autosave_pos_dict[in_record.name] = in_value
-                    self._autosave_pos_dict[out_record.name] = out_value
+                if not self.autosave_file.exists():
+                    self._autosave_dict[in_record.name] = in_value
+                    self._autosave_dict[out_record.name] = out_value
 
                 self.filter_sets_in[filter_set_key][IN_KEY] = in_record
                 self.filter_sets_out[filter_set_key][OUT_KEY] = out_record
@@ -308,13 +324,13 @@ class Wrapper:
         )
 
         shutter_open_pos = (
-            self._autosave_pos_dict[f"{self.device_name}:SHUTTER:OPEN"]
-            if self.autosave_exists
+            self._autosave_dict[f"{self.device_name}:SHUTTER:OPEN"]
+            if self.autosave_file.exists()
             else 0
         )
         shutter_closed_pos = (
-            self._autosave_pos_dict[f"{self.device_name}:SHUTTER:CLOSED"]
-            if self.autosave_exists
+            self._autosave_dict[f"{self.device_name}:SHUTTER:CLOSED"]
+            if self.autosave_file.exists()
             else 500
         )
 
@@ -329,9 +345,9 @@ class Wrapper:
             on_update=lambda val: self._set_shutter_pos(val, SHUTTER_CLOSED),
         )
 
-        if not self.autosave_exists:
-            self._autosave_pos_dict[f"{self.device_name}:SHUTTER:OPEN"] = 0.0
-            self._autosave_pos_dict[f"{self.device_name}:SHUTTER:CLOSED"] = 500.0
+        if not self.autosave_file.exists():
+            self._autosave_dict[f"{self.device_name}:SHUTTER:OPEN"] = 0.0
+            self._autosave_dict[f"{self.device_name}:SHUTTER:CLOSED"] = 500.0
 
     def _generate_pixel_threshold_records(self) -> None:
 
@@ -370,20 +386,56 @@ class Wrapper:
         ]
 
         for record in pixel_threshold_records:
-            if not self.autosave_exists:
-                self._autosave_pos_dict[record.name] = record.get()
+            if not self.autosave_file.exists():
+                self._autosave_dict[record.name] = record.get()
             else:
-                record.set(self._autosave_pos_dict[record.name])
+                record.set(self._autosave_dict[record.name])
 
-    async def _get_initial_hists(self) -> None:
 
-        self._initial_hists: Dict[str, float] = {
+    async def _setup_hist_thresholds(self) -> None:
+
+        self._hist_thresholds: Dict[str, float] = {
+            "High3": self._autosave_dict["High3"]
+            if "High3" in self._autosave_dict.keys()
+            else await caget(f"{self.detector}:OD:SUM:Histogram:High3"),
+            "High2": self._autosave_dict["High2"]
+            if "High2" in self._autosave_dict.keys()
+            else await caget(f"{self.detector}:OD:SUM:Histogram:High2"),
+            "High1": self._autosave_dict["High1"]
+            if "High1" in self._autosave_dict.keys()
+            else await caget(f"{self.detector}:OD:SUM:Histogram:High1"),
+            "Low1": self._autosave_dict["Low1"]
+            if "Low1" in self._autosave_dict.keys()
+            else await caget(f"{self.detector}:OD:SUM:Histogram:Low1"),
+            "Low2": self._autosave_dict["Low2"]
+            if "Low2" in self._autosave_dict.keys()
+            else await caget(f"{self.detector}:OD:SUM:Histogram:Low2"),
+        }
+
+        for key, value in self._hist_thresholds.items():
+            self._autosave_dict[key] = value
+
+        await self._set_hist_thresholds(self._hist_thresholds)
+
+    async def _get_hist_thresholds(self) -> None:
+
+        self._hist_thresholds: Dict[str, float] = {
             "High3": await caget(f"{self.detector}:OD:SUM:Histogram:High3"),
             "High2": await caget(f"{self.detector}:OD:SUM:Histogram:High2"),
             "High1": await caget(f"{self.detector}:OD:SUM:Histogram:High1"),
             "Low1": await caget(f"{self.detector}:OD:SUM:Histogram:Low1"),
             "Low2": await caget(f"{self.detector}:OD:SUM:Histogram:Low2"),
         }
+
+        for key, value in self._hist_thresholds.items():
+            self._autosave_dict[key] = value
+
+    async def _set_hist_thresholds(self, thresholds) -> None:
+
+        for threshold, value in thresholds.items():
+            await caput(f"{self.detector}:OD:SUM:Histogram:{threshold}", value)
+
+        self.write_autosave()
 
     async def run_forever(self) -> None:
 
@@ -447,6 +499,7 @@ class Wrapper:
     def _req_status(self) -> None:
         req_status = b'{"command":"status"}'
         self._send_message(req_status)
+
     async def _query_status(self) -> None:
         while True:
             if not self.zmq_stream.running:
@@ -581,7 +634,7 @@ class Wrapper:
         if current_shutter_state == shutter_state:
             self._set_shutter(shutter_state)
 
-        self._autosave_pos_dict[f"{self.device_name}:SHUTTER:{shutter_state}"] = val
+        self._autosave_dict[f"{self.device_name}:SHUTTER:{shutter_state}"] = val
 
         self.write_autosave()
 
@@ -589,6 +642,8 @@ class Wrapper:
     def _set_thresholds(self) -> None:
 
         self._configure_param({"pixel_count_thresholds": self.pixel_count_thresholds})
+
+        self.write_autosave()
 
     @_if_connected
     def _set_extreme_high_threshold(self, threshold: int) -> None:
@@ -650,17 +705,16 @@ class Wrapper:
     @_if_connected
     async def _set_histogram_scale(self, scale: float) -> None:
 
-        new_thresholds = self._initial_hists
+        new_thresholds = self._hist_thresholds
 
         if scale != 1.0:
-            await self._get_initial_hists()
+            await self._get_hist_thresholds()
 
             new_thresholds = {
-                key: threshold * scale for key, threshold in self._initial_hists.items()
+                key: threshold * scale for key, threshold in self._hist_thresholds.items()
             }
 
-        for key, threshold in new_thresholds.items():
-            caput(f"{self.detector}:OD:SUM:Histogram:{key}", threshold)
+        await self._set_hist_thresholds(new_thresholds)
 
     @_if_connected
     def _set_filter_set(self, filter_set_num: int) -> None:
@@ -690,7 +744,7 @@ class Wrapper:
     @_if_connected
     def _set_pos(self, filter_set: int, in_out_key: str, val: float) -> None:
 
-        self._autosave_pos_dict[f"{self.device_name}:{in_out_key}"] = val
+        self._autosave_dict[f"{self.device_name}:{in_out_key}"] = val
 
         if self.filter_set_rbv.get() == filter_set - 1:
             self._set_filter_set(filter_set - 1)

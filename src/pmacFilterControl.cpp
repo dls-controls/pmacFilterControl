@@ -408,7 +408,6 @@ void PMACFilterController::run() {
         zmq::message_t request_msg;
         this->zmq_control_socket_.recv(&request_msg);
         request_str = std::string(static_cast<char*>(request_msg.data()), request_msg.size());
-        std::cout << "Request received: " << request_str << std::endl;
 
         json request, response;
         request = _parse_json_string(request_str);
@@ -418,7 +417,6 @@ void PMACFilterController::run() {
         zmq::message_t response_msg(response_str.size());
         memcpy(response_msg.data(), response_str.c_str(), response_str.size());
         this->zmq_control_socket_.send(response_msg, 0);
-        std::cout << "- Response sent: " << response_str << std::endl;
     }
 
     std::cout << "Shutting down" << std::endl;
@@ -675,7 +673,6 @@ void PMACFilterController::_close_shutter() {
 */
 void PMACFilterController::_trigger_threshold(const std::string threshold) {
     std::cout << threshold << " threshold triggered" << std::endl;
-    std::cout << "Current threshold: " << this->pixel_count_thresholds_[threshold] << std::endl;
 
     int adjustment = THRESHOLD_ADJUSTMENTS.at(threshold);
     this->_set_attenuation(this->current_attenuation_ + adjustment);
@@ -702,18 +699,11 @@ void PMACFilterController::_set_attenuation(int attenuation) {
         attenuation = MAX_ATTENUATION;
     }
 
-    std::cout << "New attenuation: " << attenuation << std::endl;
-
-    std::cout << "Adjustments (Current | In | Final):" << std::endl;
     for (int idx = 0; idx < FILTER_COUNT; ++idx) {
         // Bit shift to get IN/OUT state of each filter
         this->final_demand_[idx] = (attenuation >> idx) & 1;
         // Prevent moving filters OUT in first move - if demand is OUT but current is IN, then stay IN until final move
         this->post_in_demand_[idx] = this->final_demand_[idx] | this->current_demand_[idx];
-
-        std::cout << this->current_demand_[idx] << " | "
-            << this->post_in_demand_[idx] << " | "
-            << this->final_demand_[idx] << std::endl;
     }
 
 #ifdef __ARM_ARCH

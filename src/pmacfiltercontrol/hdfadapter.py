@@ -1,12 +1,13 @@
-import h5py
 import os
-from numpy import int64 as np_int64
-
 from typing import Optional
 
-ATTENUATION_KEY = "attenuation"
-ADJUSTMENT_KEY = "adjustment"
-FRAME_NUMBER_KEY = "frame_number"
+import h5py
+from numpy import int64 as np_int64
+from numpy import issubdtype
+
+ATTENUATION_KEY = "/attenuation"
+ADJUSTMENT_KEY = "/adjustment"
+FRAME_NUMBER_KEY = "/frame_number"
 UID_KEY = "/uid"
 
 
@@ -26,7 +27,7 @@ class HDFAdapter:
 
     def _open_file(self) -> None:
         if self.file is None:
-            if self._check_path():
+            if self._check_path(self.file_path):
                 self.file = h5py.File(self.file_path, "w", libver="latest")
                 print(f"* File {self.file} is open.")
                 self._setup_datasets()
@@ -64,6 +65,8 @@ class HDFAdapter:
 
         def _fetch_dataset(key: str) -> h5py.Dataset:
             dset: h5py.Dataset = None
+
+            assert isinstance(self.file, h5py.File)
             if key not in self.file.keys():
                 dset = self.file.create_dataset(key, (1,), maxshape=(None,), dtype=int)
             else:
@@ -73,6 +76,9 @@ class HDFAdapter:
         self.adjustment_dset = _fetch_dataset(ADJUSTMENT_KEY)
         self.attenuation_dset = _fetch_dataset(ATTENUATION_KEY)
         self.uid_dataset = _fetch_dataset(UID_KEY)
+
+        assert isinstance(self.file, h5py.File)
+        self.file.swmr_mode = True
 
     def _write_to_file(self, data) -> None:
         try:
@@ -84,15 +90,10 @@ class HDFAdapter:
             raise RuntimeError("* ERROR: HDF5 file not open or missing datasets.")
             return
 
-        if not self.file.swmr_mode:
-            self.file.swmr_mode = True
-
-        assert self.adjustment_dset.size == self.attenuation_dset.size
         dset_size = self.adjustment_dset.size
+        assert issubdtype(dset_size, np_int64)
         if data[FRAME_NUMBER_KEY] >= dset_size:
-            assert isinstance(dset_size, np_int64)
-            while dset_size <= data[FRAME_NUMBER_KEY]:
-                dset_size = dset_size + 1
+            dset_size = max(data[FRAME_NUMBER_KEY], dset_size + 1)
             self.adjustment_dset.resize((dset_size,))
             self.attenuation_dset.resize((dset_size,))
             self.uid_dataset.resize((dset_size,))

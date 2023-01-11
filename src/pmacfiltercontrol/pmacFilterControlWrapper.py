@@ -1,19 +1,16 @@
 import asyncio
 import codecs
-import logging
-
 import json
-import zmq
-import h5py
+import logging
 import os
-from aioca import caput, caget
-from datetime import datetime as dt
+from typing import Callable, Dict, Union
+
+import zmq
+from aioca import caget, caput
 from softioc import builder
-from typing import Callable, Dict, Optional, Union
 
-from .zmqadapter import ZeroMQAdapter
 from .hdfadapter import HDFAdapter
-
+from .zmqadapter import ZeroMQAdapter
 
 MODE = [
     "MANUAL",
@@ -427,7 +424,7 @@ class Wrapper:
                 resp_json = json.loads(resp)
 
                 if "frame_number" in resp_json:
-                    if self.h5f.file is not None:
+                    if self.h5f.file_open:
                         try:
                             self.h5f._write_to_file(resp_json)
                         except RuntimeError as e:
@@ -436,7 +433,7 @@ class Wrapper:
                         print("WARNING: HDF5 file not open and frame recieved.")
 
     @_if_connected
-    def open_file(self, _) -> bool:
+    def open_file(self, _) -> None:
         if _ == 1:
             self.h5f._open_file()
 
@@ -506,7 +503,7 @@ class Wrapper:
     def _send_message(self, message: bytes) -> None:
         self.zmq_stream.send_message([message])
 
-    def _configure_param(self, param: Dict[str, Union[int, Dict[str, int]]]) -> None:
+    def _configure_param(self, param: Dict[str, Union[int, float, Dict[str, int]]]) -> None:
         configure = json.dumps({"command": "configure", "params": param})
         self._send_message(codecs.encode(configure, "utf-8"))
 
@@ -579,7 +576,7 @@ class Wrapper:
             pos = self.shutter_pos_open.get()
         await caput(f"{self.motors}:SHUTTER:POS", pos)
 
-    def _set_shutter_pos(self, val: float, shutter_state: int) -> None:
+    def _set_shutter_pos(self, val: float, shutter_state: str) -> None:
 
         if shutter_state == SHUTTER_CLOSED:
             self._configure_param({"shutter_closed_position": val})

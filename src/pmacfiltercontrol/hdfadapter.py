@@ -19,6 +19,7 @@ class HDFAdapter:
 
         self.file_path: str = hdf_file_path
         self.file: Optional[h5py.File] = None
+        self.file_open: bool = False
 
     def _set_file_path(self, new_file_path: str) -> None:
 
@@ -31,6 +32,7 @@ class HDFAdapter:
                 self.file = h5py.File(self.file_path, "w", libver="latest")
                 print(f"* File {self.file} is open.")
                 self._setup_datasets()
+                self.file_open = True
         else:
             if self.file_path != self.file.filename:
                 print("* Another file is already open and being written to.")
@@ -42,6 +44,7 @@ class HDFAdapter:
                 print(f"* File {self.file} has been closed.")
                 self.file.close()
                 self.file = None
+                self.file_open = False
             except Exception as e:
                 print(f"* Failed closing file.\n{e}")
         else:
@@ -81,14 +84,6 @@ class HDFAdapter:
         self.file.swmr_mode = True
 
     def _write_to_file(self, data) -> None:
-        try:
-            assert isinstance(self.file, h5py.File)
-            assert isinstance(self.adjustment_dset, h5py.Dataset)
-            assert isinstance(self.attenuation_dset, h5py.Dataset)
-            assert isinstance(self.uid_dataset, h5py.Dataset)
-        except AssertionError as e:
-            raise RuntimeError("* ERROR: HDF5 file not open or missing datasets.")
-            return
 
         dset_size = self.adjustment_dset.size
         assert issubdtype(dset_size, np_int64)

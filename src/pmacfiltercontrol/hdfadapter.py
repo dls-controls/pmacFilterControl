@@ -57,6 +57,8 @@ class HDFAdapter:
             parent_path: str = file_path.rsplit("/", 1)[0]
             if not os.path.isdir(parent_path):
                 print("* Path not found. Enter a valid path.")
+            elif os.path.isfile(file_path):
+                print("* File already exists.")
             else:
                 return True
 
@@ -66,19 +68,17 @@ class HDFAdapter:
 
         print(f"* Creating/fetching datasets in HDF5 file: {self.file_path}")
 
-        def _fetch_dataset(key: str) -> h5py.Dataset:
+        def _create_dataset(key: str) -> h5py.Dataset:
             dset: h5py.Dataset = None
 
             assert isinstance(self.file, h5py.File)
-            if key not in self.file.keys():
-                dset = self.file.create_dataset(key, (1,), maxshape=(None,), dtype=int)
-            else:
-                dset = self.file.get(key)
+            dset = self.file.create_dataset(key, (1,), maxshape=(None,), dtype=int)
+
             return dset
 
-        self.adjustment_dset = _fetch_dataset(ADJUSTMENT_KEY)
-        self.attenuation_dset = _fetch_dataset(ATTENUATION_KEY)
-        self.uid_dataset = _fetch_dataset(UID_KEY)
+        self.adjustment_dset = _create_dataset(ADJUSTMENT_KEY)
+        self.attenuation_dset = _create_dataset(ATTENUATION_KEY)
+        self.uid_dataset = _create_dataset(UID_KEY)
 
         assert isinstance(self.file, h5py.File)
         self.file.swmr_mode = True

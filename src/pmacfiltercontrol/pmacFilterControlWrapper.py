@@ -49,8 +49,8 @@ ATTENUATION = [
     15,
 ]
 
-SHUTTER_CLOSED = "CLOSED"
-SHUTTER_OPEN = "OPEN"
+SHUTTER_CLOSED = 0
+SHUTTER_OPEN = 1
 
 
 def _if_connected(func: Callable) -> Callable:
@@ -852,7 +852,7 @@ class Wrapper:
 
         await caput(f"{self.motors}:SHUTTER", pos, wait=False, throw=False)
 
-    def _set_shutter_pos(self, val: float, shutter_state: str) -> None:
+    def _set_shutter_pos(self, val: float, shutter_state: int) -> None:
         """
         Set the shutter position count value.
 
@@ -863,7 +863,9 @@ class Wrapper:
         if shutter_state == SHUTTER_CLOSED:
             self._configure_param({"shutter_closed_position": val})
 
-        current_shutter_state = "CLOSED" if self.shutter.get() == 0 else "OPEN"
+        current_shutter_state = (
+            SHUTTER_CLOSED if self.shutter.get() == 0 else SHUTTER_OPEN
+        )
         if current_shutter_state == shutter_state:
             self._set_shutter(shutter_state)
 
